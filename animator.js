@@ -1060,14 +1060,16 @@ export let Animator = class {
           dock._background._padding * scaleFactor;
         dock.struts.height = dock.height;
 
+        // struts is a stage-level chrome actor: its origin must follow the
+        // dock's own stage position, or the hit-test lands on another monitor
+        dock.struts.y = dock.y;
         if (dock.extension.autohide_dash) {
-          dock.struts.y = dock._background.y + dock._monitor.y;
+          dock.struts.y = dock.y + dock._background.y;
           dock.struts.height = dock._background.height;
           // X11 .. click through fix ..
           // dock.struts.width *= 1.25;
         }
 
-        // dock.struts.y = dock.y;
         if (dock._position == DockPosition.RIGHT) {
           dock.struts.x = dock.x + dock.width - dock.struts.width;
         } else {
@@ -1081,14 +1083,14 @@ export let Animator = class {
           edge_distance -
           dock._background._padding * scaleFactor;
 
+        dock.struts.x = dock.x;
         if (dock.extension.autohide_dash) {
-          dock.struts.x = dock._background.x + dock._monitor.x;
+          dock.struts.x = dock.x + dock._background.x;
           dock.struts.width = dock._background.width;
           // X11 .. click through fix ..
           // dock.struts.height *= 1.25;
         }
 
-        // dock.struts.x = dock.x;
         if (dock._position == DockPosition.BOTTOM) {
           dock.struts.y = dock.y + dock.height - dock.struts.height;
         } else {
