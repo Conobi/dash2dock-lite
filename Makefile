@@ -1,6 +1,6 @@
 all: build install lint
 
-.PHONY: build install publish check-devkit test-shell test-shell2 check smoke lint check-settings
+.PHONY: build install publish check-devkit test-shell test-shell2 check smoke lint check-settings test-unit
 
 RUNTIME_DIR ?= $(or $(XDG_RUNTIME_DIR),/run/user/$(shell id -u))
 # gnome-shell writes this at startup as a crash marker; if it is left behind
@@ -118,6 +118,10 @@ check:
 # error-class issues (shared adjustment, duplicate case, missing schema key).
 check-settings:
 	python3 tools/check-settings.py
+
+# Pure-logic unit checks (no shell needed).
+test-unit:
+	gjs -m tests/scroll_cycle_check.js
 
 # Headless nested shell: extension ACTIVE, N enable/disable cycles, no new
 # error signatures vs agents/smoke-baseline.txt. See tools/smoke-shell.sh.
