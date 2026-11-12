@@ -1,7 +1,7 @@
 // gjs -m tests/scroll_cycle_check.js — scroll window-cycling logic checks. Exits 1 on failure.
 import System from 'system';
 
-import { nextWindowIndex, throttleMs, shouldThrottle } from '../scrollCycle.js';
+import { nextWindowIndex, throttleMs, shouldThrottle, scrollStep, initialScrollState } from '../scrollCycle.js';
 
 let failures = 0;
 function check(cond, msg) {
@@ -37,6 +37,52 @@ check(throttleMs('0.9') === 300, 'throttle non-number -> default');
 check(shouldThrottle(null, 0, 0.4) === false, 'never switched -> not throttled');
 check(shouldThrottle(1000, 1299, 0.4) === true, 'inside window -> throttled');
 check(shouldThrottle(1000, 1300, 0.4) === false, 'exactly T -> passes');
+
+// scrollStep
+const A = {};
+const B = {};
+function feed(events) {
+  // events: [kind, delta, target, nowMs][]; returns last result
+  let state = initialScrollState();
+  let r = null;
+  for (const [kind, delta, target, nowMs] of events) {
+    r = scrollStep(kind, delta, state, target, nowMs);
+    state = r.state;
+  }
+  return r;
+}
+
+check(feed([['prev', 0, A, 0]]).step === -1, 'discrete prev -> -1');
+check(feed([['next', 0, A, 0]]).step === 1, 'discrete next -> +1');
+check(feed([['bogus', 0, A, 0]]).step === 0, 'unknown kind -> 0');
+
+let r = feed([['smooth', 0.4, A, 0], ['smooth', 0.4, A, 10]]);
+check(r.step === 0 && Math.abs(r.state.acc - 0.8) < 1e-9, 'smooth below 1 accumulates, no step');
+r = feed([['smooth', 0.4, A, 0], ['smooth', 0.4, A, 10], ['smooth', 0.4, A, 20]]);
+check(r.step === 1 && r.state.acc === 0, 'smooth reaching 1 -> +1 and acc reset');
+r = feed([['smooth', -0.6, A, 0], ['smooth', -0.6, A, 10]]);
+check(r.step === -1 && r.state.acc === 0, 'negative smooth -> -1');
+r = feed([['smooth', 2.5, A, 0]]);
+check(r.step === 1 && r.state.acc === 0, 'large delta -> one step, overshoot dropped');
+
+r = feed([['smooth', 0.8, A, 0], ['smooth', 0.5, B, 10]]);
+check(r.step === 0 && r.state.acc === 0.5, 'target change resets acc');
+r = feed([['smooth', 0.8, A, 0], ['smooth', 0.5, A, 501]]);
+check(r.step === 0 && r.state.acc === 0.5, 'idle > 500 ms resets acc');
+r = feed([['smooth', 0.8, A, 0], ['smooth', 0.5, A, 500]]);
+check(r.step === 1, 'idle exactly 500 ms keeps acc');
+
+r = feed([['smooth', 0.8, A, 0], ['smooth', NaN, A, 10]]);
+check(r.step === 0 && r.state.acc === 0.8, 'NaN delta ignored');
+r = feed([['smooth', 0.8, A, 0], ['smooth', Infinity, A, 10]]);
+check(r.step === 0 && r.state.acc === 0.8, 'Infinity delta ignored');
+r = feed([['smooth', 0.8, A, 0], ['next', 0, A, 10]]);
+check(r.step === 1 && r.state.acc === 0, 'discrete event resets acc');
+check(r.state.lastTarget === A && r.state.lastEventMs === 10, 'state records target and time');
+
+const s0 = { acc: 0.5, lastEventMs: 0, lastTarget: A };
+scrollStep('smooth', 0.7, s0, A, 10);
+check(s0.acc === 0.5 && s0.lastEventMs === 0, 'input state not mutated');
 
 if (failures > 0) {
   print(`${failures} failure(s)`);
