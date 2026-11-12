@@ -254,7 +254,7 @@
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Sensitivity</property>
-            <property name="subtitle" translatable="yes">Set scroll sensitivity.</property>
+            <property name="subtitle" translatable="yes">Speed of window cycling when scrolling over an app icon.</property>
             <property name="activatable-widget">scroll-sensitivity</property>
             <child>
               <object class="GtkScale" id="scroll-sensitivity">
