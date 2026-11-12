@@ -704,6 +704,29 @@ export let Dock = GObject.registerClass(
       return Compat.getStIcon(appwell);
     }
 
+    /**
+     * Freezes a BaseIcon's texture once `owner` starts being destroyed.
+     *
+     * A style-changed that lands mid-teardown (e.g. the hovered icon dropped
+     * after a drag) makes BaseIcon.vfunc_style_changed rebuild its texture:
+     * it adds a child to a St.Bin that is already destroying its children,
+     * so Clutter's destroy_all_children assertion aborts the whole Shell.
+     * Our handler is connected after the Shell's constructor handlers but
+     * still runs before the owner's class handler destroys its children.
+     *
+     * @param {St.Widget} owner actor whose destroy begins the teardown
+     * @param {object} baseIcon the IconGrid.BaseIcon inside `owner`
+     */
+    _guardIconTeardown(owner, baseIcon) {
+      if (!owner || !baseIcon?._createIconTexture || owner._d2daTeardownGuard) {
+        return;
+      }
+      owner._d2daTeardownGuard = true;
+      owner.connect('destroy', () => {
+        baseIcon._createIconTexture = () => {};
+      });
+    }
+
     _inspectIcon(c) {
       if (!c.visible) return false;
 
@@ -746,6 +769,7 @@ export let Dock = GObject.registerClass(
         let stIcon = Compat.getStIcon(c) ?? c.icon.icon;
         if (stIcon) {
           c._icon = stIcon;
+          this._guardIconTeardown(c.child, c.icon);
           // GNOME 50: child is toggleButton; GNOME 46: child is the button directly
           c._button = c.child;
           try {
@@ -765,6 +789,7 @@ export let Dock = GObject.registerClass(
         }
         if (stIcon) {
           c._grid = appwell.icon; // BaseIcon or old IconGrid
+          this._guardIconTeardown(appwell, appwell.icon);
           c._icon = stIcon;
           c._appwell = appwell;
           if (c._appwell) {
