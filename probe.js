@@ -52,6 +52,31 @@ export function applySmokeSettings(settings) {
   console.log('d2da-probe settings applied: ' + applied.join(' '));
 }
 
+/**
+ * Smoke-only: import the module named by D2DA_SMOKE_SCENARIO and run its
+ * default export `run(ext)` once. Same gating as applySmokeSettings, so a
+ * user's session can never load an arbitrary script through it.
+ *
+ * @param {object} ext the running extension instance
+ */
+export async function runSmokeScenario(ext) {
+  const path = GLib.getenv('D2DA_SMOKE_SCENARIO');
+  if (
+    !path ||
+    GLib.getenv('D2DA_PROBE') !== '1' ||
+    GLib.getenv('GSETTINGS_BACKEND') !== 'memory'
+  ) {
+    return;
+  }
+
+  try {
+    const scenario = await import(`file://${path}`);
+    await scenario.run(ext);
+  } catch (e) {
+    console.error('d2da: smoke scenario', e);
+  }
+}
+
 // Dev-only leak/regression probe (G1). No-op unless the shell runs with
 // D2DA_PROBE=1 (tools/smoke-shell.sh sets it).
 // `timers` lets disable() pass its timers in before it nulls them.
