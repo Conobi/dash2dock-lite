@@ -20,3 +20,32 @@ export function nextWindowIndex(n, focusedIndex, step) {
   const d = step < 0 ? -1 : 1;
   return (((focusedIndex + d) % n) + n) % n;
 }
+
+const DEFAULT_SENSITIVITY = 0.4;
+const MAX_THROTTLE_MS = 500;
+const MIN_THROTTLE_MS = 50;
+
+/**
+ * Minimum delay between two window switches, from the `scroll-sensitivity`
+ * setting (0..1, higher = faster). The default 0.4 gives Plank's 300 ms.
+ * Non-number or NaN input falls back to the default; values are clamped.
+ */
+export function throttleMs(sensitivity) {
+  let s =
+    typeof sensitivity === 'number' && !Number.isNaN(sensitivity)
+      ? sensitivity
+      : DEFAULT_SENSITIVITY;
+  s = Math.min(1, Math.max(0, s));
+  return Math.round(Math.max(MIN_THROTTLE_MS, MAX_THROTTLE_MS * (1 - s)));
+}
+
+/**
+ * Whether a step must be dropped because the last switch was too recent.
+ * lastSwitchMs is null before the first switch. A step exactly T ms later passes.
+ */
+export function shouldThrottle(lastSwitchMs, nowMs, sensitivity) {
+  if (lastSwitchMs === null) {
+    return false;
+  }
+  return nowMs - lastSwitchMs < throttleMs(sensitivity);
+}
