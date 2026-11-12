@@ -36,7 +36,12 @@ import { Services } from './services.js';
 import { Integrations } from './integrations.js';
 import { WindowTracker } from './windowTracker.js';
 import { runTests } from './diagnostics.js';
-import { probe, applySmokeSettings, runSmokeScenario } from './probe.js';
+import {
+  probe,
+  applySmokeSettings,
+  runSmokeScenario,
+  hoverProbe,
+} from './probe.js';
 import * as Compat from './compat.js';
 
 import {
@@ -434,6 +439,7 @@ export default class Dash2DockLiteExt extends Extension {
 
     probe(this, 'after-enable');
     runSmokeScenario(this);
+    hoverProbe(this);
   }
 
   _autohiders() {

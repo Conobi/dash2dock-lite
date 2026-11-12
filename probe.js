@@ -132,3 +132,73 @@ export function probe(ext, phase, timers) {
     console.error('d2da: probe', e);
   }
 }
+
+/**
+ * Dev-only hover check (D2DA_PROBE_HOVER=1, see tools/hover-shell.sh): once
+ * the docks settle, puts a simulated pointer on each dock's own icons and
+ * logs `d2da-hover {json}` with the dock/struts geometry and whether the dock
+ * judged the pointer within it. Writes nothing outside the shell's own state.
+ */
+export function hoverProbe(ext) {
+  if (
+    GLib.getenv('D2DA_PROBE') !== '1' ||
+    GLib.getenv('D2DA_PROBE_HOVER') !== '1'
+  ) {
+    return;
+  }
+
+  // startUp() can run again (settings-driven rebuilds); one pass is enough
+  if (ext._hoverProbed) {
+    return;
+  }
+  ext._hoverProbed = true;
+
+  const round = (a) => a.map((v) => Math.round(v * 10) / 10);
+  const after = (ms, fn) =>
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+      try {
+        fn();
+      } catch (e) {
+        console.error('d2da: hover probe', e);
+      }
+      return GLib.SOURCE_REMOVE;
+    });
+
+  // reveal autohidden docks (as a pointer reaching the dwell strip would)
+  after(3000, () => {
+    ext.docks.forEach((d) => d.autohider?.show());
+  });
+
+  ext.docks.forEach((_, i) => {
+    after(6000 + i * 1500, () => {
+      const dock = ext.docks[i];
+      const [dx, dy] = dock.dash.get_transformed_position();
+      const p = [dx + dock.dash.width / 2, dy + dock.dash.height / 2];
+      const within = dock._isWithinDash(p);
+      ext.simulated_pointer = p;
+      dock._beginAnimation();
+      after(1000, () => {
+        ext.simulated_pointer = null;
+        const m = dock._monitor;
+        console.log(
+          'd2da-hover ' +
+            JSON.stringify({
+              dock: i,
+              monitor: round([m.x, m.y, m.width, m.height]),
+              pos: dock._position,
+              pointer: round(p),
+              dockRect: round([dock.x, dock.y, dock.width, dock.height]),
+              struts: round([
+                ...dock.struts.get_transformed_position(),
+                dock.struts.width,
+                dock.struts.height,
+              ]),
+              hidden: !!dock._hidden,
+              isWithin: within,
+              animated: !!dock.animated,
+            })
+        );
+      });
+    });
+  });
+}
