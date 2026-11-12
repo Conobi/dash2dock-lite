@@ -3,10 +3,12 @@
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Fav from 'resource:///org/gnome/shell/ui/appFavorites.js';
 import * as Compat from './compat.js';
+import * as ScrollCycle from './scrollCycle.js';
 
 import Shell from 'gi://Shell';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 import Graphene from 'gi://Graphene';
 import St from 'gi://St';
 
@@ -45,9 +47,6 @@ export const DockAlignment = {
 
 const PREVIEW_FRAMES = 64;
 const ANIM_DEBOUNCE_END_DELAY = 750;
-
-const MIN_SCROLL_RESOLUTION = 4;
-const MAX_SCROLL_RESOLUTION = 10;
 
 export let Dock = GObject.registerClass(
   {},
@@ -116,7 +115,8 @@ export let Dock = GObject.registerClass(
 
       this.add_child(this.renderArea);
 
-      this._scrollCounter = 0;
+      this._scrollState = ScrollCycle.initialScrollState();
+      this._lastScrollSwitchMs = null;
 
       this.animator = new Animator();
       this.animator.dock = this;
@@ -1854,58 +1854,72 @@ export let Dock = GObject.registerClass(
       return app.get_windows();
     }
 
+    /**
+     * Plank-style window cycling: one scroll step over an app icon focuses
+     * the app's previous/next window, at most once per throttle period.
+     * Pointer-emulated events are skipped (as Shell's sliders do) so a wheel
+     * click that also produces a smooth event counts once.
+     */
     _onScrollEvent(obj, evt) {
-      this._lastScrollEvent = evt;
-      let pointer = global.get_pointer();
-      let target = this._nearestIcon; // this._hoveredIcon;
-      // console.log(`${target == this._hoveredIcon}`);
-      if (target) {
-        if (this._scrollCounter < -2 || this._scrollCounter > 2)
-          this._scrollCounter = 0;
-
-        let icon = target;
-
-        // adjustment for touch scroll (much more sensitive) and mouse scrollwheel
-        let multiplier = 1;
-        if (
-          evt.get_source_device().get_device_type() == 5 ||
-          evt.get_source_device().get_device_name().includes('Touch')
-        ) {
-          multiplier = 1;
-        } else {
-          multiplier = 5;
-        }
-
-        let SCROLL_RESOLUTION =
-          MIN_SCROLL_RESOLUTION +
-          MAX_SCROLL_RESOLUTION -
-          (MAX_SCROLL_RESOLUTION * this.extension.scroll_sensitivity || 0);
-
-        if (icon._appwell && icon._appwell.app) {
-          this._lastScrollObject = icon;
-          let direction = evt.get_scroll_direction();
-          switch (direction) {
-            case Clutter.ScrollDirection.UP:
-            case Clutter.ScrollDirection.LEFT:
-              this._scrollCounter += (1 / SCROLL_RESOLUTION) * multiplier;
-              break;
-            case Clutter.ScrollDirection.DOWN:
-            case Clutter.ScrollDirection.RIGHT:
-              this._scrollCounter -= (1 / SCROLL_RESOLUTION) * multiplier;
-              break;
-          }
-          this._cycleWindows(icon._appwell.app, evt);
-        }
+      const emulated = Clutter.EventFlags?.FLAG_POINTER_EMULATED ?? 0;
+      if (evt.get_flags() & emulated) {
+        return;
       }
-    }
 
-    // an overly sensitive setting will make window cycle too fast. allow a half second pause after each cycle
-    _lockCycle() {
-      if (this._lockedCycle) return;
-      this._lockedCycle = true;
-      this.extension._hiTimer.runOnce(() => {
-        this._lockedCycle = false;
-      }, 150);
+      const icon = this._nearestIcon;
+      const app = icon?._appwell?.app;
+      if (!app) {
+        return;
+      }
+
+      let kind;
+      let delta = 0;
+      switch (evt.get_scroll_direction()) {
+        case Clutter.ScrollDirection.UP:
+        case Clutter.ScrollDirection.LEFT:
+          kind = 'prev';
+          break;
+        case Clutter.ScrollDirection.DOWN:
+        case Clutter.ScrollDirection.RIGHT:
+          kind = 'next';
+          break;
+        case Clutter.ScrollDirection.SMOOTH: {
+          const [dx, dy] = evt.get_scroll_delta();
+          kind = 'smooth';
+          delta = dy !== 0 ? dy : dx;
+          break;
+        }
+        default:
+          return;
+      }
+
+      const nowMs = GLib.get_monotonic_time() / 1000;
+      const { step, state } = ScrollCycle.scrollStep(
+        kind,
+        delta,
+        this._scrollState,
+        icon,
+        nowMs,
+      );
+      this._scrollState = state;
+      if (step === 0) {
+        return;
+      }
+      if (
+        ScrollCycle.shouldThrottle(
+          this._lastScrollSwitchMs,
+          nowMs,
+          this.extension.scroll_sensitivity,
+        )
+      ) {
+        return;
+      }
+
+      const onlyActiveWorkspace =
+        (evt.get_state() & Clutter.ModifierType.CONTROL_MASK) !== 0;
+      if (this._cycleWindows(app, step, onlyActiveWorkspace)) {
+        this._lastScrollSwitchMs = nowMs;
+      }
     }
 
     _raiseAndFocus(w) {
@@ -1919,67 +1933,41 @@ export let Dock = GObject.registerClass(
       }
     }
 
-    _cycleWindows(app, evt) {
-      if (this._lockedCycle) {
-        this._scrollCounter = 0;
+    /**
+     * Activate the app window one step away from the focused one, in stable
+     * creation order (oldest first), wrapping at both ends. Returns true when
+     * a window was activated, so the caller can start the throttle period.
+     */
+    _cycleWindows(app, step, onlyActiveWorkspace) {
+      const activeWs = global.workspace_manager.get_active_workspace();
+      let windows = this.getAppWindowsFiltered(app);
+      if (onlyActiveWorkspace) {
+        windows = windows.filter((w) => w.get_workspace() === activeWs);
+      }
+      windows.sort((a, b) => (a.get_id() < b.get_id() ? -1 : 1));
+
+      const focused = windows.findIndex((w) => w.has_focus());
+      const idx = ScrollCycle.nextWindowIndex(windows.length, focused, step);
+      if (idx < 0) {
         return false;
       }
+      this._activateWindowForScroll(windows[idx]);
+      return true;
+    }
 
-      let focusId = 0;
-      let workspaceManager = global.workspace_manager;
-      let activeWs = workspaceManager.get_active_workspace();
-
-      // let windows = app.get_windows();
-      let windows = this.getAppWindowsFiltered(app);
-
-      if (evt.get_state() & Clutter.ModifierType.CONTROL_MASK) {
-        windows = windows.filter((w) => {
-          return activeWs == w.get_workspace();
-        });
-      }
-
-      let nw = windows.length;
-      windows.sort((w1, w2) => {
-        return w1.get_id() > w2.get_id() ? -1 : 1;
-      });
-
-      //! add explanations
-      if (nw > 1) {
-        for (let i = 0; i < nw; i++) {
-          if (windows[i].has_focus()) {
-            focusId = i;
-          }
-          if (windows[i].is_hidden()) {
-            windows[i].unminimize();
-            windows[i].raise();
-          }
-        }
-
-        let current_focus = focusId;
-
-        if (this._scrollCounter < -1 || this._scrollCounter > 1) {
-          focusId += Math.round(this._scrollCounter);
-          if (focusId < 0) {
-            focusId = nw - 1;
-          }
-          if (focusId >= nw) {
-            focusId = 0;
-          }
-          this._scrollCounter = 0;
-        }
-
-        if (current_focus == focusId) return;
-      } else if (nw == 1) {
-        if (windows[0].is_hidden()) {
-          windows[0].unminimize();
-          windows[0].raise();
-        }
-      }
-
-      let window = windows[focusId];
-      if (window) {
-        this._lockCycle();
-        this._raiseAndFocus(window);
+    /**
+     * Main.activateWindow without its overview/calendar side effects, and
+     * safe for on-all-workspaces windows (get_workspace() is null there).
+     * Meta.Window.activate unminimises; no other window is touched.
+     */
+    _activateWindowForScroll(w) {
+      const time = global.get_current_time();
+      const ws = w.get_workspace();
+      const activeWs = global.workspace_manager.get_active_workspace();
+      if (ws && ws !== activeWs) {
+        ws.activate_with_focus(w, time);
+      } else {
+        w.activate(time);
       }
     }
   }
