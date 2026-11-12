@@ -46,6 +46,7 @@ importMap = [
     [ "from './autohide.js", "const AutoHide = Me.imports.autohide.AutoHide;" ],
     [ "import { MonitorsConfig }", "const MonitorsConfig = Me.imports.monitors.MonitorsConfig;" ],
     [ "import { Timer }", "const Timer = Me.imports.timer.Timer;" ],
+    [ "import * as ScrollCycle", "const ScrollCycle = Me.imports.scrollCycle;" ],
     [ "import { Style }", "const Style = Me.imports.style.Style;" ],
     [ "import { Dock }", "const Dock = Me.imports.dock.Dock;" ],
     [ "import { DockPosition }", "const DockPosition = {BOTTOM: 'bottom',LEFT: 'left',RIGHT: 'right',TOP: 'top'};" ],
